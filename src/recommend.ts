@@ -1,7 +1,11 @@
 import type { ListeningEvent, Track } from './types'
 export function recommend(tracks: Track[], events: ListeningEvent[], limit = 5) {
   const completed = events.filter(e => e.type === 'complete'), skipped = new Set(events.filter(e => e.type === 'skip').map(e => e.trackId))
-  const liked = new Set(events.filter(e => e.type === 'like').map(e => e.trackId))
+  const liked = new Set<string>()
+  events.forEach(event => {
+    if (event.type === 'like') liked.add(event.trackId)
+    if (event.type === 'unlike') liked.delete(event.trackId)
+  })
   const counts = new Map<string, number>(); completed.forEach(e => counts.set(e.trackId, (counts.get(e.trackId) ?? 0) + 1))
   const recent = [...completed].sort((a, b) => b.at - a.at)[0]?.trackId
   const recentTrack = tracks.find(t => t.id === recent)

@@ -12,23 +12,24 @@ export function useAudioPlayback(
     const element = audio.current
     if (!element) return
     element.pause()
-    if (!track?.blob) {
+    if (!track?.blob && !track?.streamUrl) {
       element.removeAttribute('src')
       element.load()
       return
     }
-    const url = URL.createObjectURL(track.blob)
+    const url = track.blob ? URL.createObjectURL(track.blob) : track.streamUrl
+    if (!url) return
     element.src = url
     element.load()
     return () => {
       element.pause()
-      URL.revokeObjectURL(url)
+      if (track.blob) URL.revokeObjectURL(url)
     }
   }, [audio, track?.id])
 
   useEffect(() => {
     const element = audio.current
-    if (!element || !track?.blob) return
+    if (!element || (!track?.blob && !track?.streamUrl)) return
     if (!playing) {
       element.pause()
       return

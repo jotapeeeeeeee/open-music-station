@@ -22,4 +22,13 @@ describe('recommend', () => {
     expect(result[0].track.id).toBe('a')
     expect(result[0].reason).toBe('Because you liked this')
   })
+
+  it('removes the like boost when the listener unlikes a track', () => {
+    const events: ListeningEvent[] = [
+      { trackId: 'c', type: 'like', at: 1 },
+      { trackId: 'c', type: 'unlike', at: 2 },
+    ]
+    expect(recommend(tracks, events)[0].track.id).toBe('a')
+    expect(recommend(tracks, events).some(result => result.reason === 'Because you liked this')).toBe(false)
+  })
 })

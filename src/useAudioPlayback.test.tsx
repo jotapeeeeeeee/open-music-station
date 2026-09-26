@@ -45,4 +45,14 @@ describe('useAudioPlayback', () => {
     unmount()
     expect(revokeObjectURL).toHaveBeenCalledOnce()
   })
+
+  it('uses a remote licensed stream URL without creating or revoking a blob URL', () => {
+    const remoteAudio = document.createElement('audio')
+    const remote = { ...demoTracks[0], streamUrl: 'https://upload.wikimedia.org/example.ogg' }
+    const { unmount } = renderHook(() => useAudioPlayback({ current: remoteAudio }, remote, true, vi.fn()))
+    expect(remoteAudio.getAttribute('src')).toBe(remote.streamUrl)
+    expect(createObjectURL).not.toHaveBeenCalled()
+    unmount()
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+  })
 })

@@ -21,14 +21,17 @@ type PlayerBarProps = {
 export default function PlayerBar({ current, playing, progress, volume, queueLength, liked, audio, onToggle, onPrevious, onNext, onLike, onProgress, onVolume }: PlayerBarProps) {
   function seek(event: ChangeEvent<HTMLInputElement>) {
     const time = Number(event.currentTarget.value)
-    if (current?.blob && audio.current) audio.current.currentTime = time
+    if ((current?.blob || current?.streamUrl) && audio.current) audio.current.currentTime = time
     onProgress(time)
   }
 
   return <footer className="player">{current ? <>
     <div className="now-playing">
       <div className="artwork"><span>{current.title.split(' ').map(word => word[0]).join('').slice(0, 2)}</span></div>
-      <div><b>{current.title}</b><span>{current.artist}</span></div>
+      <div className="now-playing-copy"><b>{current.title}</b><span>{current.artist}</span>
+        {current.license && <span className="playback-attribution">{current.attribution} · <a href={current.licenseUrl} target="_blank" rel="noreferrer">license</a> · <a href={current.sourceUrl} target="_blank" rel="noreferrer">source</a></span>}
+        {!current.blob && !current.streamUrl && <small className="demo-label">Synthetic demo tone</small>}
+      </div>
       <button className="heart-button" onClick={onLike} aria-label={liked ? 'Remove from likes' : 'Add to likes'}>{liked ? '♥' : '♡'}</button>
     </div>
     <div className="transport">
