@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, DragEvent } from 'react'
 import { demoTracks, formatTime } from './data'
 import { recommend } from './recommend'
 import { loadEvents, loadTracks, saveEvent, saveTrack } from './storage'
+import { createQueue, takeNextTrack, takePreviousTrack } from './playback'
+import PlayerBar from './PlayerBar'
+import { useAudioPlayback } from './useAudioPlayback'
 import type { ListeningEvent, Track } from './types'
 
 type View = 'home' | 'search' | 'library' | 'likes' | 'queue'
@@ -15,27 +18,75 @@ export default function App() {
   const [tracks, setTracks] = useState<Track[]>(demoTracks), [events, setEvents] = useState<ListeningEvent[]>([])
   const [view, setView] = useState<View>('home'), [query, setQuery] = useState(''), [current, setCurrent] = useState<Track | null>(null)
   const [playing, setPlaying] = useState(false), [progress, setProgress] = useState(0), [volume, setVolume] = useState(0.78)
+  const [queue, setQueue] = useState<Track[]>([]), [playbackHistory, setPlaybackHistory] = useState<Track[]>([])
   const [toast, setToast] = useState(''), [dragging, setDragging] = useState(false), [notInterested, setNotInterested] = useState<Set<string>>(new Set())
-  const audio = useRef<HTMLAudioElement | null>(null), fileInput = useRef<HTMLInputElement | null>(null), tone = useRef<OscillatorNode | null>(null), audioContext = useRef<AudioContext | null>(null)
+  const audio = useRef<HTMLAudioElement | null>(null), fileInput = useRef<HTMLInputElement | null>(null), audioContext = useRef<AudioContext | null>(null)
 
   useEffect(() => { Promise.all([loadTracks(), loadEvents()]).then(([saved, history]) => { if (saved.length) setTracks([...demoTracks, ...saved.filter(t => !t.id.startsWith('demo-'))]); setEvents(history) }) }, [])
-  useEffect(() => { if (!playing || !current) return; const id = window.setInterval(() => setProgress(p => { const next = p + 1; if (next >= current.duration) { void record('complete', current); setPlaying(false); return 0 } return next }), 1000); return () => window.clearInterval(id) }, [playing, current])
-  useEffect(() => { const player = audio.current; if (!player || !current?.blob) return; const url = URL.createObjectURL(current.blob); player.src = url; if (playing) void player.play(); return () => { player.pause(); URL.revokeObjectURL(url) } }, [current, playing])
+  const handlePlaybackError = useCallback(() => {
+    setPlaying(false)
+    setToast(`Could not play “${current?.title ?? 'this track'}”. Try another audio format.`)
+  }, [current?.title])
+  useAudioPlayback(audio, current, playing, handlePlaybackError)
+  useEffect(() => {
+    if (!playing || !current || current.blob) return
+    const startingProgress = progress
+    const startedAt = Date.now()
+    let completed = false
+    const id = window.setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000)
+      const next = Math.min(current.duration, startingProgress + elapsed)
+      setProgress(next)
+      if (next >= current.duration && !completed) {
+        completed = true
+        window.clearInterval(id)
+        void record('complete', current)
+        advance()
+      }
+    }, 250)
+    return () => window.clearInterval(id)
+  }, [playing, current?.id])
   useEffect(() => {
     if (!current || current.blob) return
     if (!playing) return
     const context = audioContext.current ?? new AudioContext(); audioContext.current = context
     const oscillator = context.createOscillator(); const gain = context.createGain()
     oscillator.frequency.value = 180 + (current.id.charCodeAt(5) % 5) * 38; oscillator.type = 'triangle'; gain.gain.value = volume * 0.035
-    oscillator.connect(gain).connect(context.destination); oscillator.start(); tone.current = oscillator
-    return () => { oscillator.stop(); tone.current = null }
+    oscillator.connect(gain).connect(context.destination); oscillator.start()
+    return () => oscillator.stop()
   }, [current, playing, volume])
+  useEffect(() => { if (audio.current) audio.current.volume = volume }, [volume])
   const suggestions = useMemo(() => recommend(tracks.filter(t => !notInterested.has(t.id)), events), [tracks, events, notInterested])
   const filtered = tracks.filter(t => `${t.title} ${t.artist} ${t.genre} ${t.tags.join(' ')}`.toLowerCase().includes(query.toLowerCase()))
   const liked = new Set(events.filter(e => e.type === 'like').map(e => e.trackId))
 
   async function record(type: ListeningEvent['type'], track: Track) { const event = { trackId: track.id, type, at: Date.now() }; setEvents(e => [...e, event]); await saveEvent(event) }
-  function play(track: Track) { setCurrent(track); setPlaying(true); setProgress(0) }
+  function play(track: Track) {
+    if (current && current.id !== track.id) setPlaybackHistory(history => [...history, current])
+    setCurrent(track)
+    setQueue(createQueue(tracks, track.id))
+    setPlaying(true)
+    setProgress(0)
+  }
+  function advance() {
+    if (!current) return
+    const next = takeNextTrack(queue, tracks, current.id)
+    if (!next.track) { setPlaying(false); return }
+    setPlaybackHistory(history => [...history, current])
+    setQueue(next.queue)
+    setCurrent(next.track)
+    setPlaying(true)
+    setProgress(0)
+  }
+  function previous() {
+    const previousTrack = takePreviousTrack(playbackHistory, current, queue)
+    if (!previousTrack) return
+    setPlaybackHistory(previousTrack.history)
+    setQueue(previousTrack.queue)
+    setCurrent(previousTrack.track)
+    setPlaying(true)
+    setProgress(0)
+  }
   function handleFiles(files: FileList | File[]) { Array.from(files).filter(f => f.type.startsWith('audio/')).forEach(file => { const track: Track = { id: `local-${crypto.randomUUID()}`, title: file.name.replace(/\.[^/.]+$/, ''), artist: 'Local file', album: 'Imported', year: new Date().getFullYear(), genre: 'Unsorted', tags: ['your library'], duration: 0, color: '#d7f45b', blob: file }; setTracks(t => [...t, track]); void saveTrack(track); setToast('Added to your library') }); setDragging(false) }
   function onInput(e: ChangeEvent<HTMLInputElement>) { if (e.target.files) handleFiles(e.target.files) }
   function onDrop(e: DragEvent) { e.preventDefault(); handleFiles(e.dataTransfer.files) }
@@ -43,7 +94,14 @@ export default function App() {
   function toggleLike(track: Track) { void record('like', track); setToast(liked.has(track.id) ? 'Removed from likes' : 'Saved to likes') }
   function nav(v: View) { setView(v); if (v !== 'search') setQuery('') }
 
-  return <div className="app-shell" onDragOver={e => { e.preventDefault(); setDragging(true) }} onDrop={onDrop}><audio ref={audio} onTimeUpdate={e => setProgress(e.currentTarget.currentTime)} onEnded={() => { if (current) void record('complete', current); setPlaying(false) }} />
+  return <div className="app-shell" onDragOver={e => { e.preventDefault(); setDragging(true) }} onDrop={onDrop}><audio ref={audio} onTimeUpdate={e => setProgress(e.currentTarget.currentTime)} onLoadedMetadata={e => {
+    if (!current?.blob || !Number.isFinite(e.currentTarget.duration)) return
+    const updated = { ...current, duration: e.currentTarget.duration }
+    setCurrent(updated)
+    void saveTrack(updated)
+  }} onEnded={() => { if (current) void record('complete', current); advance() }} onError={() => {
+    if (current?.blob) { setPlaying(false); setToast(`Could not decode “${current.title}”. Try another audio format.`) }
+  }} />
     {dragging && <div className="drop-overlay"><strong>Drop audio to add it</strong><span>Files stay in this browser</span></div>}
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">◒</span><span>open<br /><b>music</b></span></div>
@@ -54,7 +112,7 @@ export default function App() {
       <header className="topbar"><button className="mobile-brand" onClick={() => nav('home')}>open <b>music</b></button><div className="breadcrumbs">{view === 'home' ? 'YOUR STATION' : view.replace('-', ' ').toUpperCase()}</div><div className="top-actions"><button className="icon-button" aria-label="Search" onClick={() => nav('search')}>⌕</button><button className="avatar" aria-label="Local profile">OM</button></div></header>
       {view === 'search' ? <section className="content search-view"><div className="heading-row"><div><p className="tiny-label">FIND A SOUND</p><h1>Search your library.</h1></div></div><div className="search-box"><span>⌕</span><input autoFocus value={query} onChange={e => setQuery(e.target.value)} placeholder="Track, artist, genre or tag" /></div><TrackList tracks={filtered} liked={liked} onPlay={play} onLike={toggleLike} onNotInterested={t => { setNotInterested(s => new Set(s).add(t.id)); void record('not-interested', t) }} /></section> : view === 'library' || view === 'likes' ? <section className="content"><div className="heading-row"><div><p className="tiny-label">{view === 'likes' ? 'YOUR PICKS' : 'YOUR FILES'}</p><h1>{view === 'likes' ? 'Liked tracks.' : 'Your library.'}</h1></div><button className="outline-button" onClick={() => fileInput.current?.click()}>＋ Add music</button></div>{view === 'library' && !tracks.some(t => t.id.startsWith('local-')) && <EmptyState onImport={() => fileInput.current?.click()} />}{view === 'likes' && !liked.size && <EmptyState onImport={() => nav('home')} copy="Like a track and it will live here." />}{(view === 'library' ? tracks.filter(t => t.id.startsWith('local-')) : tracks.filter(t => liked.has(t.id))).length > 0 && <TrackList tracks={view === 'library' ? tracks.filter(t => t.id.startsWith('local-')) : tracks.filter(t => liked.has(t.id))} liked={liked} onPlay={play} onLike={toggleLike} />}</section> : <section className="content home-view"><div className="station-intro"><div><p className="tiny-label">GOOD EVENING, LISTENER</p><h1>Your station,<br /><i>in progress.</i></h1><p className="lede">A private listening space that gets more personal with every play.</p></div><div className="station-note"><span className="signal-line" /><span>Powered by your<br />listening history</span></div></div><div className="section-heading"><div><p className="tiny-label">UP NEXT FOR YOU</p><h2>Made for this moment</h2></div><button className="subtle-button" onClick={() => nav('queue')}>View queue →</button></div><div className="recommendations">{suggestions.slice(0, 3).map(({ track, reason }, i) => <article className={`feature-track ${i === 0 ? 'featured' : ''}`} key={track.id} onDoubleClick={() => play(track)}><Artwork track={track} large={i === 0} /><div className="feature-copy"><span className="reason">{reason}</span><h3>{track.title}</h3><p>{track.artist} · {track.genre}</p><button className="play-small" onClick={() => play(track)}>▶ Play now</button></div><button className="heart-button" onClick={() => toggleLike(track)} aria-label="Like track">{liked.has(track.id) ? '♥' : '♡'}</button></article>)}</div><div className="lower-grid"><section className="import-panel"><div><p className="tiny-label">YOUR LIBRARY</p><h2>Bring your own sound.</h2><p>Drop audio here or choose files. Metadata stays yours.</p></div><button className="lime-button" onClick={() => fileInput.current?.click()}>＋ Import audio</button></section><section className="recent-panel"><div className="section-heading"><div><p className="tiny-label">RECENTLY PLAYED</p><h2>Keep the thread.</h2></div></div>{events.filter(e => e.type === 'complete').slice(-3).reverse().map(e => { const t = tracks.find(x => x.id === e.trackId); return t ? <div className="mini-row" key={`${t.id}-${e.at}`}><Artwork track={t} /><span><b>{t.title}</b><small>{t.artist}</small></span><time>played</time></div> : null })}{!events.length && <p className="muted">Your listening history will appear here.</p>}</section></div></section>}
     </main>
-    <footer className="player">{current ? <><div className="now-playing"><Artwork track={current} /><div><b>{current.title}</b><span>{current.artist}</span></div><button className="heart-button" onClick={() => toggleLike(current)}>{liked.has(current.id) ? '♥' : '♡'}</button></div><div className="transport"><div className="transport-buttons"><button aria-label="Previous">↶</button><button className="play-main" onClick={() => setPlaying(!playing)}>{playing ? 'Ⅱ' : '▶'}</button><button aria-label="Next" onClick={() => play(suggestions.find(s => s.track.id !== current.id)?.track ?? tracks[0])}>↷</button></div><div className="progress-wrap"><span>{formatTime(progress)}</span><input aria-label="Track progress" type="range" min="0" max={current.duration || 1} value={progress} onChange={e => setProgress(Number(e.target.value))} /><span>{formatTime(current.duration)}</span></div></div><div className="volume"><span>⌕</span><input aria-label="Volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={e => setVolume(Number(e.target.value))} /></div></> : <div className="player-empty"><span className="pulse" /> Select a track to start listening</div>}</footer>
+    <PlayerBar current={current} playing={playing} progress={progress} volume={volume} queueLength={queue.length} liked={current ? liked.has(current.id) : false} audio={audio} onToggle={() => setPlaying(value => !value)} onPrevious={previous} onNext={advance} onLike={() => { if (current) toggleLike(current) }} onProgress={setProgress} onVolume={setVolume} />
     {toast && <div className="toast" role="status">{toast}</div>}
   </div>
 }

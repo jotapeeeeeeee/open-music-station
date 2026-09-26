@@ -13,7 +13,7 @@ Build and test with `npm run build` and `npm test`.
 
 ## Architecture
 
-Vite + React + TypeScript. `src/storage.ts` wraps IndexedDB (`tracks` and `events` stores). `src/recommend.ts` ranks local tracks deterministically from likes, completed plays, skips, genre/artist similarity, and recent listening. The UI is intentionally small and composable in `src/App.tsx`; all visual tokens live in `src/styles.css`.
+Vite + React + TypeScript. `src/storage.ts` wraps IndexedDB (`tracks` and `events` stores). `src/recommend.ts` ranks local tracks deterministically from likes, completed plays, skips, genre/artist similarity, and recent listening. `src/useAudioPlayback.ts` owns local audio URL lifetime and play/pause without reloading the source; real-file progress and seeking use the audio element's current time. `src/playback.ts` defines the ordered next/previous queue. The UI lives in `src/App.tsx` and `src/PlayerBar.tsx`; all visual tokens live in `src/styles.css`.
 
 ## Data and licensing
 
