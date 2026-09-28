@@ -1,0 +1,19 @@
+{
+  "id": "./",
+  "name": "Open Music Station",
+  "short_name": "Open Music",
+  "description": "A private listening station for music you own and open-licensed recordings.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d0e0c",
+  "theme_color": "#0d0e0c",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

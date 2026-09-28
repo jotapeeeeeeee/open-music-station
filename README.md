@@ -13,7 +13,7 @@ Build and test with `npm run build` and `npm test`.
 
 ## Architecture
 
-Vite + React + TypeScript. `src/storage.ts` wraps IndexedDB (`tracks`, `events`, and `playlists`). `src/recommend.ts` ranks local tracks deterministically from likes, completed plays, skips, genre/artist similarity, and recent listening. `src/useAudioPlayback.ts` owns local and remote audio source lifetimes without reloading on pause; real-audio progress and seeking use the media element's current time. `src/playback.ts` defines the ordered next/previous queue. Wikimedia Commons search and license filtering live in `src/commonsCatalog.ts`. The UI lives in `src/App.tsx` and `src/PlayerBar.tsx`; visual tokens live in `src/styles.css`.
+Vite + React + TypeScript. `src/storage.ts` wraps IndexedDB (`tracks`, `events`, and `playlists`). `src/recommend.ts` ranks local tracks deterministically from likes, completed plays, skips, genre/artist similarity, and recent listening. `src/libraryBrowse.ts` groups and sorts the library by artist, album, genre, title, recency, and completed plays. `src/useAudioPlayback.ts` owns local and remote audio source lifetimes without reloading on pause; real-audio progress and seeking use the media element's current time. `src/playback.ts` defines the ordered next/previous queue. Wikimedia Commons search and license filtering live in `src/commonsCatalog.ts`. The UI lives in `src/App.tsx` and `src/PlayerBar.tsx`; visual tokens live in `src/styles.css`.
 
 ## Data and licensing
 
@@ -24,6 +24,10 @@ To add another source, implement an adapter that returns `Track` records with a 
 ## Local backup
 
 Use **Export library** to download a JSON snapshot of track metadata, playlists, and listening events. Audio bytes are intentionally omitted from the export; re-select local files after moving to another browser or device.
+
+## Install and offline use
+
+The app is installable as a PWA and caches its app shell/assets for offline startup. Imported audio and local listening data remain in IndexedDB and can play offline after the browser has loaded them. The Commons catalog and its remote audio require a network connection; remote streams are not cached.
 
 ## Test deployment
 

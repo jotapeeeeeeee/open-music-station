@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, DragEvent, FormEvent } from 'react'
 import { demoTracks, formatTime } from './data'
 import { searchCommonsTracks } from './commonsCatalog'
+import { groupLibraryTracks, sortLibraryTracks } from './libraryBrowse'
 import { recommend } from './recommend'
 import { createQueue, takeNextTrack, takePreviousTrack } from './playback'
 import { deletePlaylist, loadEvents, loadPlaylists, loadTracks, saveEvent, savePlaylist, saveTrack } from './storage'
@@ -9,7 +10,9 @@ import PlayerBar from './PlayerBar'
 import { useAudioPlayback } from './useAudioPlayback'
 import { useMediaSession } from './useMediaSession'
 import { usePlaybackShortcuts } from './usePlaybackShortcuts'
+import { useOnlineStatus } from './useOnlineStatus'
 import type { ListeningEvent, Playlist, Track } from './types'
+import type { LibraryGroupBy, LibrarySort } from './libraryBrowse'
 
 type View = 'home' | 'search' | 'library' | 'likes' | 'queue' | 'playlists'
 
@@ -33,6 +36,9 @@ export default function App() {
   const [volume, setVolume] = useState(0.78)
   const [queue, setQueue] = useState<Track[]>([])
   const [playbackHistory, setPlaybackHistory] = useState<Track[]>([])
+  const [libraryMode, setLibraryMode] = useState<'tracks' | LibraryGroupBy>('tracks')
+  const [selectedLibraryGroup, setSelectedLibraryGroup] = useState<string | null>(null)
+  const [librarySort, setLibrarySort] = useState<LibrarySort>('title')
   const [activePlaylistId, setActivePlaylistId] = useState<string | null>(null)
   const [newPlaylistName, setNewPlaylistName] = useState('')
   const [editingTrack, setEditingTrack] = useState<Track | null>(null)
@@ -41,6 +47,7 @@ export default function App() {
   const [editAlbum, setEditAlbum] = useState('')
   const [toast, setToast] = useState('')
   const [dragging, setDragging] = useState(false)
+  const [offlineReady, setOfflineReady] = useState(Boolean(navigator.serviceWorker?.controller))
   const audio = useRef<HTMLAudioElement | null>(null)
   const fileInput = useRef<HTMLInputElement | null>(null)
   const audioContext = useRef<AudioContext | null>(null)
@@ -152,8 +159,24 @@ export default function App() {
   const activePlaylist = playlists.find(playlist => playlist.id === activePlaylistId) ?? null
   const playlistTracks = activePlaylist ? activePlaylist.trackIds.map(id => tracks.find(track => track.id === id)).filter((track): track is Track => Boolean(track)) : []
   const libraryTracks = ownedTracks.filter(track => track.id.startsWith('local-') || track.saved)
+  const libraryGroups = useMemo(() => libraryMode === 'tracks' ? [] : groupLibraryTracks(libraryTracks, events, libraryMode, librarySort), [libraryTracks, events, libraryMode, librarySort])
+  const activeLibraryGroup = libraryGroups.find(group => group.key === selectedLibraryGroup) ?? null
+  const displayedLibraryTracks = activeLibraryGroup?.tracks ?? sortLibraryTracks(libraryTracks, events, librarySort)
+  const likedTracks = tracks.filter(track => liked.has(track.id))
   usePlaybackShortcuts(togglePlayback)
   useMediaSession(current, playing, { play: () => setPlaying(true), pause: () => setPlaying(false), previous, next: advance })
+  const isOnline = useOnlineStatus()
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+    let active = true
+    void navigator.serviceWorker.ready.then(() => { if (active) setOfflineReady(true) }).catch(() => {
+      if (active) setToast('Offline app storage is unavailable in this browser.')
+    })
+    const onRegistrationError = () => setToast('The app could not enable offline support. Check browser permissions.')
+    window.addEventListener('pwa-registration-error', onRegistrationError)
+    return () => { active = false; window.removeEventListener('pwa-registration-error', onRegistrationError) }
+  }, [])
 
   async function record(type: ListeningEvent['type'], track: Track) {
     const event: ListeningEvent = { trackId: track.id, type, at: Date.now() }
@@ -223,7 +246,7 @@ export default function App() {
     const audioFiles = Array.from(files).filter(file => file.type.startsWith('audio/'))
     if (!audioFiles.length) { setToast('Choose an audio file to import.'); setDragging(false); return }
     for (const file of audioFiles) {
-      const track: Track = { id: `local-${crypto.randomUUID()}`, title: file.name.replace(/\.[^/.]+$/, ''), artist: 'Local file', album: 'Imported', year: new Date().getFullYear(), genre: 'Unsorted', tags: ['your library'], duration: 0, color: '#d7f45b', blob: file }
+      const track: Track = { id: `local-${crypto.randomUUID()}`, title: file.name.replace(/\.[^/.]+$/, ''), artist: 'Local file', album: 'Imported', year: new Date().getFullYear(), genre: 'Unsorted', tags: ['your library'], duration: 0, color: '#d7f45b', blob: file, addedAt: Date.now() }
       setTracks(items => [...items, track])
       void saveTrack(track).catch(() => setToast(`Could not save “${track.title}” in this browser.`))
     }
@@ -258,7 +281,7 @@ export default function App() {
   }
 
   function addToLibrary(track: Track) {
-    const saved = { ...track, saved: true }
+    const saved = { ...track, saved: true, addedAt: Date.now() }
     setTracks(items => items.some(item => item.id === track.id) ? items.map(item => item.id === track.id ? saved : item) : [...items, saved])
     void saveTrack(saved).then(() => setToast('Track saved to your library.')).catch(() => setToast('Could not save this track in your library.'))
   }
@@ -281,7 +304,7 @@ export default function App() {
     if (activePlaylist.trackIds.includes(track.id)) { setToast('That track is already in this playlist.'); return }
     const updated = { ...activePlaylist, trackIds: [...activePlaylist.trackIds, track.id], updatedAt: Date.now() }
     try {
-      if (!track.id.startsWith('demo-')) await saveTrack({ ...track, saved: true })
+      if (!track.id.startsWith('demo-')) await saveTrack({ ...track, saved: true, addedAt: track.addedAt ?? Date.now() })
       await savePlaylist(updated)
       if (!track.id.startsWith('demo-')) setTracks(items => items.map(item => item.id === track.id ? { ...item, saved: true } : item))
       setPlaylists(items => items.map(item => item.id === updated.id ? updated : item))
@@ -350,7 +373,7 @@ export default function App() {
         <button className={view === 'playlists' ? 'active' : ''} aria-label="Playlists" aria-current={view === 'playlists' ? 'page' : undefined} onClick={() => navigate('playlists')}>≡ <span>Playlists</span><em>{playlists.length || ''}</em></button>
       </nav>
       <div className="sidebar-bottom">
-        <p className="tiny-label">LOCAL MODE</p><p className="privacy"><span className="status-dot" /> Nothing leaves this device</p>
+        <p className="tiny-label">LOCAL MODE</p><p className="privacy"><span className={`status-dot ${isOnline ? '' : 'offline'}`} /> {isOnline ? 'Nothing leaves this device' : 'Offline · your library is here'}</p>
         <button className="text-button" onClick={exportData}>↥ Export library</button>
         <button className="text-button" onClick={() => fileInput.current?.click()}>＋ Import audio</button>
         <input ref={fileInput} hidden type="file" accept="audio/*" multiple onChange={onInput} />
@@ -360,7 +383,7 @@ export default function App() {
       <header className="topbar">
         <button className="mobile-brand" onClick={() => navigate('home')}>open <b>music</b></button>
         <div className="breadcrumbs">{view === 'home' ? 'YOUR STATION' : view === 'queue' ? 'UP NEXT' : view.toUpperCase()}</div>
-        <div className="top-actions"><button className="icon-button" aria-label="Search" onClick={() => navigate('search')}>⌕</button><button className="avatar" aria-label="Local profile">OM</button></div>
+        <div className="top-actions"><span className={`connection-status ${isOnline ? 'online' : 'offline'}`} aria-label={isOnline ? 'Online' : 'Offline'} title={offlineReady ? 'App shell available offline' : 'Offline support is still preparing'}>{isOnline ? 'ONLINE' : 'OFFLINE'}</span><button className="icon-button" aria-label="Search" onClick={() => navigate('search')}>⌕</button><button className="avatar" aria-label="Local profile">OM</button></div>
       </header>
 
       {view === 'search' && <section className="content search-view">
@@ -400,9 +423,30 @@ export default function App() {
       {(view === 'library' || view === 'likes') && <section className="content">
         <div className="heading-row"><div><p className="tiny-label">{view === 'likes' ? 'YOUR PICKS' : 'YOUR FILES + SAVED OPEN MUSIC'}</p><h1>{view === 'likes' ? 'Liked tracks.' : 'Your library.'}</h1></div><button className="outline-button" onClick={() => fileInput.current?.click()}>＋ Add music</button></div>
         {editingTrack && <form className="metadata-editor" onSubmit={event => void saveMetadata(event)}><h2>Edit track details</h2><label>Title<input value={editTitle} onChange={event => setEditTitle(event.target.value)} /></label><label>Artist<input value={editArtist} onChange={event => setEditArtist(event.target.value)} /></label><label>Album<input value={editAlbum} onChange={event => setEditAlbum(event.target.value)} /></label><button className="lime-button">Save details</button><button type="button" className="text-button" onClick={() => setEditingTrack(null)}>Cancel</button></form>}
-        {view === 'library' && !libraryTracks.length && <EmptyState onImport={() => fileInput.current?.click()} />}
-        {view === 'likes' && !tracks.some(track => liked.has(track.id)) && <EmptyState onImport={() => navigate('search')} copy="Like a track and it will live here." />}
-        <TrackList tracks={view === 'library' ? libraryTracks : tracks.filter(track => liked.has(track.id))} liked={liked} onPlay={play} onLike={toggleLike} onNotInterested={dismissTrack} onQueue={addToQueue} onEdit={startEditing} onAddToPlaylist={addToPlaylist} />
+        {view === 'library' && <>
+          <div className="library-toolbar">
+            <div className="library-tabs" role="group" aria-label="Browse your library">
+              {(['tracks', 'artist', 'album', 'genre'] as const).map(mode => <button key={mode} type="button" aria-pressed={libraryMode === mode} className={libraryMode === mode ? 'selected' : ''} onClick={() => { setLibraryMode(mode); setSelectedLibraryGroup(null) }}>{mode === 'tracks' ? 'Tracks' : `${mode[0].toUpperCase()}${mode.slice(1)}s`}</button>)}
+            </div>
+            <label className="sort-control">Sort
+              <select aria-label="Sort library" value={librarySort} onChange={event => setLibrarySort(event.target.value as LibrarySort)}>
+                <option value="title">Title A–Z</option>
+                <option value="recent">Recently added</option>
+                <option value="played">Most played</option>
+              </select>
+            </label>
+          </div>
+          {libraryMode !== 'tracks' && activeLibraryGroup && <div className="section-heading group-heading"><div><button className="text-button" onClick={() => setSelectedLibraryGroup(null)}>← All {libraryMode}s</button><h2>{activeLibraryGroup.label}</h2></div><span className="track-meta">{activeLibraryGroup.tracks.length} tracks · {activeLibraryGroup.playCount} plays</span></div>}
+          {libraryMode !== 'tracks' && !activeLibraryGroup && <div className="library-groups" aria-label={`${libraryMode} groups`}>
+            {libraryGroups.map(group => <button className="library-group" key={group.key} onClick={() => setSelectedLibraryGroup(group.key)}>
+              <Artwork track={group.tracks[0]} /><span><b>{group.label}</b><small>{group.tracks.length} {group.tracks.length === 1 ? 'track' : 'tracks'} · {group.playCount} plays</small></span><span className="group-examples">{group.tracks.slice(0, 3).map(track => track.title).join(' · ')}</span><span aria-hidden="true">→</span>
+            </button>)}
+            {!libraryGroups.length && <EmptyState onImport={() => fileInput.current?.click()} copy={`Import or save music to browse your library by ${libraryMode}.`} />}
+          </div>}
+        </>}
+        {view === 'library' && libraryMode === 'tracks' && !libraryTracks.length && <EmptyState onImport={() => fileInput.current?.click()} />}
+        {view === 'likes' && !likedTracks.length && <EmptyState onImport={() => navigate('search')} copy="Like a track and it will live here." />}
+        {((view === 'library' && (libraryMode === 'tracks' ? libraryTracks.length > 0 : Boolean(activeLibraryGroup))) || (view === 'likes' && likedTracks.length > 0)) && <TrackList tracks={view === 'library' ? displayedLibraryTracks : likedTracks} liked={liked} onPlay={play} onLike={toggleLike} onNotInterested={dismissTrack} onQueue={addToQueue} onEdit={startEditing} onAddToPlaylist={addToPlaylist} />}
       </section>}
 
       {view === 'home' && <section className="content home-view">
