@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:electron": "electron-vite dev",
     "build": "tsc -b && vite build",
+    "build:electron": "electron-vite build && electron-builder",
     "test": "vitest run",
     "preview": "vite preview"
   },
@@ -15,11 +17,15 @@
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
+    "@electron-toolkit/preload": "^1.1.0",
     "@testing-library/react": "^16.3.0",
-    "fake-indexeddb": "^6.2.2",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.2",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.4",
+    "electron-vite": "^1.0.0",
+    "fake-indexeddb": "^6.2.2",
     "jsdom": "^26.1.0",
     "typescript": "^5.8.3",
     "vite": "^7.1.3",
